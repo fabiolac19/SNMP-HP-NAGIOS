@@ -2,6 +2,8 @@
 
 # Modo de uso: hp-nagios.sh <ip addr or hostname> <private or public>
 
+#----------
+
 STATE_OK=$(expr 0)
 STATE_WARNING=$(expr 1)
 STATE_CRITICAL=$(expr 2)
