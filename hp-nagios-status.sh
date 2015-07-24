@@ -1,79 +1,89 @@
 #!/bin/bash
+if [[ $1 = "--help" || $1 = "-h" ]]; then
+	echo "# Modo de uso: ./hp-nagios.sh <ip> <community> <umbral warning> <umbral critico>"
+    exit 1
 
-c1=0
-i1=0
-flag_statusman=0;
-flag_statusstor=0;
-flag_numman=0;
-flag_numstor=0;
-# Verifica status Manager. En caso de estado "down" guarda id del modulo y levanta bandera identificando problema.
-while read -r line; do
-	#num_mod=$(echo $line | cut -f1 -d' ')
-	manager[c1]=$(echo $line | cut -f2 -d' ')
-	#echo "manager:"${manager[$c1]}
-	if [[ "${manager[$c1]}" != "up" ]]
-	then
-		flag_statusman=1;
-		flag_numman[$i1]=$c1
-		((i1=i1+1))
-	fi
-	((c1=c1+1))
-done < managerstatus
-flag_statusstor=0
-# Verifica status Storage. En caso de estado "down" guarda id del modulo y levanta bandera identificando problema.
-while read -r line; do
-	#num_mod1=$(echo $line | cut -f1 -d' ')
-	storage[c2]=$(echo $line | cut -f2 -d' ')
-	if [[ "${storage[$c2]}" != "up" ]]
-	then
-		flag_statusstor=1;
-		flag_statusnum[$i2]=$c2
-		((i2=i2+1))
-	fi
-	((c2=c2+1))
-done < storagestatus 
-
-# Verifica state Storage. En caso distinto a "ok" guarda id del modulo y levanta bandera identificando problema.
-while read -r line; do
-	storagestates[c3]=$(echo $line | cut -f2 -d' ')
-	if [[ "${storagestates[$c3]}" != "ok" ]]
-	then
-		flag_statestor=1;
-		flag_statenum[$i3]=$c3
-		((i3=i3+1))
-	fi
-	((c3=c3+1))
-done < storagestate 
-
-# Verifica condition Storage. En caso de: notReady levantamos flag_warning, inoperable overloaded levantamos flag_warning
-
-while read -r line; do
-	#num_mod1=$(echo $line | cut -f1 -d' ')
-	condition[c4]=$(echo $line | cut -f2 -d' ')
-	if [[ "${condition[$c4]}" == "notReady" ]]
-	then
-		flag_warning=1;
-		flag_numwarn[$i4]=$c4
-		((i4=i4+1))
-	fi
-	if [[ "${condition[$c4]}" == "inoperable" || "${condition[$c4]}" == "overloaded" ]]
-	then
-		flag_critical=1;
-		flag_numcri[$i5]=$c4
-		((i5=i5+1))
-	fi	
-	((c2=c4+1))
-done < storagecondition 
-
-if [[ -n $flag_statusman ]]
-then
-	c1=3
-  echo ${flag_numman[*]}
-  echo ${manager[$c1]}
-  
+elif [[ $1 = "check_status" ]]; then
+	echo "# check_status"
+	echo "segundo parametro:"$2
+    exit 1
+elif [[ $1 = "check_space" || $1 = "-h" ]]; then
+	echo "# check_space" 
+	echo "segundo parametro:"$2
+    exit 1
+else
+	echo "# Modo de uso: ./hp-nagios.sh <ip> <community> <umbral warning> <umbral critico>"
+	exit 1
 fi
+# Define variables de retorno para el estado del cluster
+echo "" > ok_status
+echo "" > warning_status
+echo "" > critical_status
+STATE_OK=$(expr 0)
+STATE_WARNING=$(expr 1)
+STATE_CRITICAL=$(expr 2)
+STATE_UNKNOWN=$(expr 3)
+# Instancia cluster: 1
+CLUSTERINSTANCE=1
+# LIBEXEC= ruta de acceso a pluggins o addons de NAGIOS donde se encuentra check_snmp
+LIBEXEC="/usr/lib/nagios/plugins/"
 
-if [[ $flag_statusstor == "1" ]]
+RET=$?
+if [[ $RET -ne 0 ]]
 then
-  echo "nop"${storage[$flag_numstor]}
+echo "query problem - No data received from host"
+exit $STATE_UNKNOWN
+fi
+# $3 parametro: numero de modulo storage
+nombre=$($LIBEXEC/check_snmp -P 2c -H $1 -C $2 -o LEFTHAND-NETWORKS-NSM-CLUSTERING-MIB::clusModuleName.$3 | cut -f4 -d' ')
+#The manager status: up(1), down(2) 
+managerstatus=$($LIBEXEC/check_snmp -P 2c -H $1 -C $2 -o LEFTHAND-NETWORKS-NSM-CLUSTERING-MIB::clusManagerStatus.$3 | cut -f4 -d' ')
+if [[ "$managerstatus" != "up" ]]
+	then
+		flag_managerdown=1;
+		mancritical="ManagerStatus: $managerstatus. "
+		#sed "s|$| ManagerStatus ${managerstatus}|" critical_status > aux_critical
+fi
+# The State of the storage system storage server in the cluster: "ok"
+storagestate=$($LIBEXEC/check_snmp -P 2c -H $1 -C $2 -o LEFTHAND-NETWORKS-NSM-CLUSTERING-MIB::clusModuleStorageState.$3 | cut -f4 -d' ')
+if [[ "$storagestate" != "ok" ]]
+	then
+		flag_storageko=1;
+		storcritical="StorageState: $storagestate. "
+fi
+# The storage system storage server Status: up(1), down(2) 
+storagestatus=$($LIBEXEC/check_snmp -P 2c -H $1 -C $2 -o LEFTHAND-NETWORKS-NSM-CLUSTERING-MIB::clusModuleStorageStatus.$3 |  cut -f4 -d' ')
+if [[ "$storagestatus" != "up" ]]
+	then
+		flag_storagedown=1;
+		storcritical1="StorageStatus: $storagestatus "
+fi
+# The condition/state of the storage on the storage module: notReady(1), inoperable(2), overloaded(3), ready(4)
+storagecondition=$($LIBEXEC/check_snmp -P 2c -H $1 -C $2 -o LEFTHAND-NETWORKS-NSM-CLUSTERING-MIB::clusModuleStorageCondition.$3 |  cut -f4 -d' ')
+if [[ "$storagecondition" == "notReady" ]]
+then
+	flag_warning=1;
+	storwarning="StorageCondition: $storagecondition "
+fi
+if [[ "$storagecondition" == "inoperable" || "$storagecondition" == "overloaded" ]]
+then
+	flag_critical=1;
+	storcritical2="StorageCondition: $storagecondition "
+fi	
+
+if [[ $flag_managerdown == "1" || $flag_storagedown == "1" || $flag_storageko == "1" || $flag_critical == "1" ]]
+then
+	echo "CRITICAL $mancritical$storcritical$storcritical1$storcritical2"
+	exit $STATE_CRITICAL
+elif [[ $flag_warning == "1" ]]
+then
+	echo "WARNING - $storwarning"
+	exit $STATE_WARNING
+elif [[ $flag_managerdown == "0" || $flag_storagedown == "0" || $flag_storageko == "0" || $flag_critical == "0" ]]
+then
+	echo "OK - ManagerStatus: $managerstatus. StorageState: $storagestate. StorageStatus: $storagestatus. StorageCondition: $storagecondition. "
+	exit $STATE_OK
+else
+	#echo "problem - No data received from host"
+	exit $STATE_UNKNOWN
 fi
