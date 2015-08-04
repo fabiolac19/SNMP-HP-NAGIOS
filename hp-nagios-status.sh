@@ -31,6 +31,13 @@ flag_managerdown=0
 flag_storagedown=0
 flag_warning=0
 flag_critical=0
+flag_devicestate=0
+flag_devicestatus=0
+flag_raiddevistate=0
+flag_raiddevistatus=0
+flag_raidstatus=0
+flag_raidstate=0
+
 
 RET=$?
 if [[ $RET -ne 0 ]]
@@ -44,6 +51,7 @@ if [[ $1 = "--help" || $1 = "-h" ]]; then # agregar nulo segundo parametro
 	echo "Modo de uso:"
 	echo "./check_hp_storevirtual.sh space_usage <ip> <community> <umbral warning> <umbral critico>"
 	echo "./check_hp_storevirtual.sh cluster_status <ip> <community> <num storage>"
+	echo "./check_hp_storevirtual.sh storage_status <ip> <community>"
     exit 1
 elif [[ $1 = "cluster_status" ]]; then
 	#nombre=$(echo "LEFTHAND-NETWORKS-NSM-CLUSTERING-MIB::clusClusterModuleName.1.1 = STRING: rogelio-a" | sed 's/^.*\: //g;s/=.*\://g;s/(.*//g')
@@ -93,6 +101,76 @@ elif [[ $1 = "cluster_status" ]]; then
 		exit $STATE_UNKNOWN
 	fi
 
+    exit 1
+elif [[ $1 = "storage_status" ]]; then
+	
+	# The number of storage devices this RAID device (controller) has.
+	totalraid=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageRaidDiskCount.1 | sed 's/^.*\- //g;s/ .*//g')
+	raidcount=1
+	while [ "$raidcount" -lt $totalraid ]
+	do
+		# The device (presence) state: on_and_secured, off_and_secured, off_or_removed"
+		devicestate=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageDeviceState.$raidcount | sed 's/^.*\- //g;s/ |.*//g')		
+		#	flag_devicestate=1;
+		if [[ "$devicestatus" != "On_and_secured" ]]
+		then
+			flag_devicestate=1;			
+			raid_array[$i0]="RAID: $raidcount STATE: $devicestate"
+			((i0=i0+1))
+		fi
+				
+		# The device status: pass, fail
+		devicestatus=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageDeviceStatus.$raidcount | sed 's/^.*\- //g;s/(.*//g')
+		if [[ "$devicestatus" != "pass" ]]
+		then
+			flag_devicestate=1;			
+			raid_array1[$i1]="RAID: $raidcount STATUS: $devicestatus"
+			((i1=i1+1))
+		fi
+	raidcount=$(($raidcount+1))
+	done
+
+	# The RAID device (controller) state: normal, rebuilding, degraded
+	raiddevistate=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageRaidDeviceState.1 | sed 's/^.*\- //g;s/ .*//g')
+	if [[ "$raiddevistate" != "Normal" ]]
+	then
+		flag_raiddevistate=1;
+	fi
+	# The RAID device (Controller) status: pass(1), fail(2)
+	raiddevistatus=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageRaidDeviceStatus.1 | sed 's/^.*\- //g;s/(.*//g')
+	if [[ "$raiddevistatus" == "fail" ]]
+	then
+		flag_raiddevistatus=1;
+	fi
+	# The RAID status: pass(1), fail(2)
+	raidstatus=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageRaidStatus.0 | sed 's/^.*\- //g;s/(.*//g')
+	if [[ "$raidstatus" == "fail" ]]
+	then
+		flag_raidstatus=1;
+	fi
+	# The system RAID state: normal, rebuilding, degraded
+	raidstate=$($LIBEXEC/check_snmp -P 2c -H $2 -C $3 -o LEFTHAND-NETWORKS-NSM-STORAGE-MIB::storageRaidState.0 | sed 's/^.*\- //g;s/ .*//g')
+	if [[ "$raidstate" != "Normal" ]]
+	then
+		flag_raidstate=1;
+	fi
+	
+	if [[ $flag_devicestate == "1" || $flag_devicestatus == "1" || $flag_raiddevistate == "1" || $flag_raiddevistatus == "1" || $flag_raidstatus == "1" || $flag_raidstate == "1" ]]
+	then
+		echo "CRITICAL - DeviceState: ${raid_array1[*]} DeviceStatus: ${raid_array[*]} RaidDeviceState: $raiddevistate RaidDeviceStatus: $raiddevistatus RaidStatus: $raidstatus RaidState: $raidstate "
+		exit $STATE_CRITICAL
+	# elif [[ $flag_warning == "1" ]]
+	# then
+	# 	echo "WARNING - "
+	# 	exit $STATE_WARNING
+	elif [[ $flag_devicestate == "0" || $flag_devicestatus == "0" || $flag_raiddevistate == "0" || $flag_raiddevistatus == "0" || $flag_raidstatus == "0" || $flag_raidstate == "0" ]]
+	then
+		echo "OK - DeviceState: $devicestate DeviceStatus: $devicestatus RaidDeviceState: $raiddevistate RaidDeviceStatus: $raiddevistatus RaidStatus: $raidstatus RaidState: $raidstate "
+		exit $STATE_OK
+	else
+		#echo "problem - No data received from host"
+		exit $STATE_UNKNOWN
+	fi
 
     exit 1
 elif [[ $1 = "space_usage" ]]; then	
